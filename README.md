@@ -1,30 +1,30 @@
-## Laboratório Kubernetes local com Kind + Ingress + MetalLB
+## Local Kubernetes Lab with Kind + Ingress + MetalLB
 
-Este projeto sobe um cluster Kubernetes local com 3 nós usando Kind, instala o NGINX Ingress Controller e configura o MetalLB para simular serviços `LoadBalancer`. Inclui um exemplo de aplicação e acesso local via `/etc/hosts`. Também é possível usar um serviço de domínio externo para expor publicamente, se desejar (não detalhado aqui).
+This project brings up a local 3-node Kubernetes cluster using Kind, installs the NGINX Ingress Controller, and configures MetalLB to simulate `LoadBalancer` Services. It includes a sample app and local access via `/etc/hosts`. You can also use an external domain service to expose it publicly if you wish (not detailed here).
 
 - **Kind** (Kubernetes in Docker): `https://kind.sigs.k8s.io/`
 
-### Por que usar este setup
-- **Realista**: mesmos componentes usados em produção (Ingress, LoadBalancer).
-- **Rápido e reprodutível**: `make rebuild` cria tudo do zero em minutos.
-- **Sem custo de cloud**: ótimo para desenvolvimento, POCs e estudos.
-- **Pronto para CI**: fácil criar clusters efêmeros para testes E2E.
+### Why use this setup
+- **Realistic**: same components used in production (Ingress, LoadBalancer).
+- **Fast and reproducible**: `make rebuild` creates everything from scratch in minutes.
+- **No cloud cost**: great for development, POCs, and learning.
+- **CI-ready**: easy to create ephemeral clusters for E2E tests.
 
-### Componentes incluídos
+### Included components
 - 3 nodes (1 control-plane, 2 workers)
-- NGINX Ingress Controller (classe padrão `nginx`)
-- MetalLB com IP pool para Services `LoadBalancer`
-- Manifests de demo (`hello-ingress.yaml`)
+- NGINX Ingress Controller (default class `nginx`)
+- MetalLB with an IP pool for `LoadBalancer` Services
+- Demo manifests (`hello-ingress.yaml`)
 
 ---
 
-## Requisitos
-- Docker e permissões para executar containers
+## Requirements
+- Docker and permissions to run containers
 - `kind`, `kubectl`, `helm`
 
 ---
 
-## Estrutura do repositório
+## Repository structure
 
 ```text
 kind-complete-stack/
@@ -39,73 +39,73 @@ kind-complete-stack/
 
 ---
 
-## Como subir o cluster
+## How to bring up the cluster
 
 ```bash
 make rebuild
 ```
 
-O comando executa, nesta ordem: destruir cluster anterior, criar novo (`kind-cluster.yaml`), instalar Ingress NGINX e MetalLB.
+This command performs, in order: destroy previous cluster, create a new one (`kind-cluster.yaml`), install NGINX Ingress and MetalLB.
 
-Se ocorrer erro de porta 80/443 ocupada, veja "Troubleshooting > Portas 80/443 ocupadas" abaixo.
-
----
-
-## Comandos úteis (Makefile)
-
-- `make up`: cria o cluster a partir de `kind-cluster.yaml`
-- `make ingress`: instala o NGINX Ingress Controller
-- `make metallb`: instala e configura o MetalLB (IPAddressPool + L2Advertisement)
-- `make destroy`: remove o cluster
-- `make rebuild`: recria tudo do zero
-
-Observação: os alvos `demo` e `hosts` não estão ativos no `Makefile`. Você pode aplicar a demo manualmente com `kubectl apply -f hello-ingress.yaml` e gerenciar o `/etc/hosts` conforme orientações abaixo.
+If you get an error about ports 80/443 being in use, see "Troubleshooting > Ports 80/443 in use" below.
 
 ---
 
-## Formas de acessar sua aplicação
+## Useful commands (Makefile)
 
-### Desenvolvimento local via `/etc/hosts` (com MetalLB)
-1. Suba o cluster: `make rebuild`
-2. Instale a demo (opcional):
+- `make up`: create the cluster from `kind-cluster.yaml`
+- `make ingress`: install the NGINX Ingress Controller
+- `make metallb`: install and configure MetalLB (IPAddressPool + L2Advertisement)
+- `make destroy`: remove the cluster
+- `make rebuild`: recreate everything from scratch
+
+Note: the `demo` and `hosts` targets are not active in the `Makefile`. You can apply the demo manually with `kubectl apply -f hello-ingress.yaml` and manage `/etc/hosts` as described below.
+
+---
+
+## Ways to access your application
+
+### Local development via `/etc/hosts` (with MetalLB)
+1. Bring up the cluster: `make rebuild`
+2. Install the demo (optional):
    ```bash
    kubectl apply -f hello-ingress.yaml
    ```
-3. Descubra o IP do LoadBalancer do Ingress NGINX:
+3. Get the LoadBalancer IP of the NGINX Ingress:
    ```bash
    kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
    ```
-4. Adicione o host no `/etc/hosts` (substitua `$IP`):
+4. Add the host to `/etc/hosts` (replace `$IP`):
    ```bash
    echo "$IP hello.local" | sudo tee -a /etc/hosts
    ```
-5. Acesse: `http://hello.local`
+5. Access: `http://hello.local`
 
-> Dica: Você pode alterar o `host` no `hello-ingress.yaml` para outro domínio local, ex.: `app.local`.
+> Tip: You can change the `host` in `hello-ingress.yaml` to another local domain, e.g., `app.local`.
 
-### Uso de um serviço de domínio (opcional)
-Você pode utilizar um serviço de domínio externo (por exemplo, um provedor de DNS) para apontar um nome como `www.seu-dominio.com` para este cluster. Essa configuração depende do seu ambiente e provedor e não é detalhada aqui.
+### Using a domain service (optional)
+You can use an external domain service (for example, a DNS provider) to point a name like `www.your-domain.com` to this cluster. This setup depends on your environment and provider and is not detailed here.
 
 ---
 
 ## Troubleshooting
 
-### Portas 80/443 ocupadas ao criar o cluster
-Sintoma (Kind/Docker):
+### Ports 80/443 in use when creating the cluster
+Symptom (Kind/Docker):
 
 ```
 failed to bind host port for 0.0.0.0:80 ... address already in use
 ```
 
-Causa: o `kind-cluster.yaml` mapeia as portas 80 e 443 do host para o node de controle. Se o host já tem `nginx`, `apache` ou outro processo na 80/443, a criação falha.
+Cause: `kind-cluster.yaml` maps host ports 80 and 443 to the control-plane node. If the host already has `nginx`, `apache`, or another process on 80/443, creation fails.
 
-Opções de correção:
-- Parar o serviço do host e recriar o cluster:
+Fix options:
+- Stop the host service and recreate the cluster:
   ```bash
   sudo systemctl stop nginx apache2 httpd traefik caddy haproxy 2>/dev/null || true
   make rebuild
   ```
-- Alterar as portas do host (ex.: 8080/8443):
+- Change the host ports (e.g., 8080/8443):
   ```yaml
   # kind-cluster.yaml
   nodes:
@@ -116,36 +116,36 @@ Opções de correção:
       - containerPort: 443
         hostPort: 8443
   ```
-  Acesse via `http://localhost:8080`.
-- Remover os `extraPortMappings` e usar apenas o IP do MetalLB (recomendado para este stack). Veja a seção 
-  "Desenvolvimento local via `/etc/hosts`" para mapear o host para o IP do Ingress.
+  Access via `http://localhost:8080`.
+- Remove `extraPortMappings` and use only the MetalLB IP (recommended for this stack). See the section
+  "Local development via `/etc/hosts`" to map the host to the Ingress IP.
 
-Como identificar quem está usando a porta:
+How to identify which process is using the port:
 ```bash
 sudo lsof -nP -iTCP:80 -sTCP:LISTEN
 sudo lsof -nP -iTCP:443 -sTCP:LISTEN
 ```
 
 ### MetalLB IP Pool
-O script `deploy-metallb.sh` cria um `IPAddressPool` e um `L2Advertisement` com um range padrão. Ajuste o range conforme a sub-rede da rede Docker `kind`:
+The `deploy-metallb.sh` script creates an `IPAddressPool` and an `L2Advertisement` with a default range. Adjust the range according to the Docker `kind` network subnet:
 ```bash
 docker network inspect kind | grep Subnet
 ```
-Edite o range no script se necessário.
+Edit the range in the script if necessary.
 
-### Demo e domínios customizados
-Altere o host no `hello-ingress.yaml` para o domínio desejado (ex.: `www.devops.lab.com.br`). É possível integrar um serviço de domínio externo para acesso público, se necessário.
+### Demo and custom domains
+Change the host in `hello-ingress.yaml` to the desired domain (e.g., `www.devops.lab.com.br`). You can integrate an external domain service for public access if needed.
 
 ---
 
-## Limpeza
+## Cleanup
 ```bash
 make destroy
 ```
 
 ---
 
-## Notas
-- O Kind não suporta webhooks admission do ingress-nginx por padrão; o script de instalação desativa os webhooks de admission.
-- Para habilitar métricas e HPA, você pode aplicar `metrics-server.yaml` (ajuste se necessário para o seu ambiente).
+## Notes
+- Kind does not support ingress-nginx admission webhooks by default; the install script disables the admission webhooks.
+- To enable metrics and HPA, you can apply `metrics-server.yaml` (adjust as needed for your environment).
 
