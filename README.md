@@ -1,256 +1,151 @@
-Durante essa jornada, estarei utilizando o **Kind** como ambiente principal.
+## Laboratório Kubernetes local com Kind + Ingress + MetalLB
 
-> **Fonte oficial do Kind:**  
-> [https://kind.sigs.k8s.io/](https://kind.sigs.k8s.io/)
+Este projeto sobe um cluster Kubernetes local com 3 nós usando Kind, instala o NGINX Ingress Controller e configura o MetalLB para simular serviços `LoadBalancer`. Inclui um exemplo de aplicação e acesso local via `/etc/hosts`. Também é possível usar um serviço de domínio externo para expor publicamente, se desejar (não detalhado aqui).
+
+- **Kind** (Kubernetes in Docker): `https://kind.sigs.k8s.io/`
+
+### Por que usar este setup
+- **Realista**: mesmos componentes usados em produção (Ingress, LoadBalancer).
+- **Rápido e reprodutível**: `make rebuild` cria tudo do zero em minutos.
+- **Sem custo de cloud**: ótimo para desenvolvimento, POCs e estudos.
+- **Pronto para CI**: fácil criar clusters efêmeros para testes E2E.
+
+### Componentes incluídos
+- 3 nodes (1 control-plane, 2 workers)
+- NGINX Ingress Controller (classe padrão `nginx`)
+- MetalLB com IP pool para Services `LoadBalancer`
+- Manifests de demo (`hello-ingress.yaml`)
 
 ---
 
-## Por que utilizar o Kind?
+## Requisitos
+- Docker e permissões para executar containers
+- `kind`, `kubectl`, `helm`
 
-- Permite criar **múltiplos nodes com kubeadm**, simulando um cluster real de forma mais próxima da produção.
-- Executa o **mesmo stack utilizado em clusters reais**.
-- Utiliza **imagens oficiais do Kubernetes**, garantindo maior fidelidade ao ambiente real.
-- É ideal para **testes automatizados e pipelines CI/CD**, onde o comportamento do cluster precisa ser realista.
-
-Aqui vai um **pacote completo do meu setup Kind**, pronto para rodar com `make` e simular um cluster Kubernetes real com:
-
-* 3 nodes (1 control-plane, 2 workers)
-* NGINX Ingress Controller
-* MetalLB com IP pool
-* Aplicação demo acessível via `http://hello.local`
-
-## Nota:
-O Kind não suporta webhooks admission do ingress-nginx por padrão, porque:
-- O service ingress-nginx-controller-admission é do tipo ClusterIP
-- E Kind não tem DNS interno nem rede compatível para o kube-apiserver acessar o webhook via esse service
 ---
 
-## 📁 Estrutura final
+## Estrutura do repositório
 
 ```text
-kind-setup/
+kind-complete-stack/
 ├── Makefile
-├── cluster.yaml
+├── kind-cluster.yaml
 ├── deploy-nginx-ingress.sh
 ├── deploy-metallb.sh
 ├── hello-ingress.yaml
+├── metrics-server.yaml
 └── README.md
 ```
 
 ---
 
-## 1. `kind-cluster.yaml` – define a topologia do cluster
-
-```yaml
-kind: Cluster
-apiVersion: kind.x-k8s.io/v1alpha4
-name: dev-cluster
-nodes:
-- role: control-plane
-  extraPortMappings:
-    - containerPort: 80
-      hostPort: 80
-    - containerPort: 443
-      hostPort: 443
-- role: worker
-- role: worker
-networking:
-  disableDefaultCNI: false
-  apiServerAddress: "127.0.0.1"
-  apiServerPort: 6443
-
-```
-
----
-
-## 2. `deploy-nginx-ingress.sh`
+## Como subir o cluster
 
 ```bash
-#!/bin/bash
-set -e
-
-echo "Instalando ingress-nginx no Kind (sem webhook admission)..."
-
-helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx \
-  --namespace ingress-nginx \
-  --create-namespace \
-  --set controller.admissionWebhooks.enabled=false \
-  --set controller.ingressClassResource.default=true \
-  --set controller.ingressClassResource.name=nginx \
-  --set controller.service.type=LoadBalancer
-
-
-# Label para identificar que o node está pronto para ingress (não obrigatório mas usado por outros setups)
-for node in $(kubectl get nodes -o name); do
-  kubectl label "$node" ingress-ready=true --overwrite
-done
-
-echo "Aguardando Ingress Controller ficar pronto..."
-kubectl wait --namespace ingress-nginx \
-  --for=condition=Ready pod \
-  --selector=app.kubernetes.io/component=controller \
-  --timeout=180s
-
-```
-
----
-
-## 3. `deploy-metallb.sh`
-
-```bash
-#!/bin/bash
-echo "[INFO] Deploying MetalLB..."
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/v0.13.10/config/manifests/metallb-native.yaml
-
-echo "[INFO] Aguardando pods do MetalLB ficarem prontos..."
-kubectl wait --namespace metallb-system \
-  --for=condition=Ready pod \
-  --selector=component=controller \
-  --timeout=120s
-
-echo "[INFO] Aplicando configuração de IP Pool..."
-cat <<EOF | kubectl apply -f -
-apiVersion: metallb.io/v1beta1
-kind: IPAddressPool
-metadata:
-  name: kind-pool
-  namespace: metallb-system
-spec:
-  addresses:
-  - 172.19.255.200-172.19.255.250
----
-apiVersion: metallb.io/v1beta1
-kind: L2Advertisement
-metadata:
-  name: l2
-  namespace: metallb-system
-EOF
-```
-
-> Ajuste o range `172.19.255.200-250` conforme o subnet Docker (ver com `docker network inspect kind | grep Subnet`).
-
----
-
-## 4. `hello-ingress.yaml` – serviço e ingress
-
-```yaml
----
-apiVersion: apps/v1
-kind: Deployment
-metadata:
-  name: hello
-spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: hello
-  template:
-    metadata:
-      labels:
-        app: hello
-    spec:
-      containers:
-      - name: hello
-        image: nginxdemos/hello
-        ports:
-        - containerPort: 80
----
-apiVersion: v1
-kind: Service
-metadata:
-  name: hello
-spec:
-  selector:
-    app: hello
-  ports:
-  - protocol: TCP
-    port: 80
-    targetPort: 80
-  type: LoadBalancer
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: hello-ingress
-  annotations:
-    nginx.ingress.kubernetes.io/rewrite-target: /
-spec:
-  ingressClassName: nginx
-  rules:
-  - host: hello.local
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: hello
-            port:
-              number: 80
-```
-
----
-
-## 5. `Makefile`
-
-```makefile
-CLUSTER_NAME=dev-cluster
-
-up:
-	@echo "[INFO] Criando cluster Kind..."
-	kind create cluster --config cluster.yaml --name $(CLUSTER_NAME)
-
-ingress:
-	bash deploy-nginx-ingress.sh
-
-metallb:
-	bash deploy-metallb.sh
-
-demo:
-	kubectl apply -f hello-ingress.yaml
-
-hosts:
-	@echo "[INFO] Adicionando hello.local ao /etc/hosts"
-	echo "172.19.255.200 hello.local" | sudo tee -a /etc/hosts
-
-destroy:
-	@echo "[INFO] Removendo cluster..."
-	kind delete cluster --name $(CLUSTER_NAME)
-
-rebuild: destroy up ingress metallb demo hosts
-```
-
----
-
-## 6. `README.md` (opcional)
-
-```markdown
-# kind-lab
-
-Laboratório local com Kubernetes usando Kind + Ingress + MetalLB.
-
-## Comandos
-
-- `make up` – cria o cluster
-- `make ingress` – instala NGINX Ingress
-- `make metallb` – instala MetalLB
-- `make demo` – sobe app de teste com Ingress e LoadBalancer
-- `make hosts` – adiciona entrada no `/etc/hosts`
-- `make destroy` – remove o cluster
-- `make rebuild` – recria tudo do zero
-```
-
----
-
-## 🚀 Como usar
-
-```bash
-git clone https://github.com/SEU_USUARIO/kind-lab.git
-cd kind-setup
-
 make rebuild
 ```
 
-Depois, acesse: [http://hello.local](http://hello.local)
+O comando executa, nesta ordem: destruir cluster anterior, criar novo (`kind-cluster.yaml`), instalar Ingress NGINX e MetalLB.
+
+Se ocorrer erro de porta 80/443 ocupada, veja "Troubleshooting > Portas 80/443 ocupadas" abaixo.
 
 ---
+
+## Comandos úteis (Makefile)
+
+- `make up`: cria o cluster a partir de `kind-cluster.yaml`
+- `make ingress`: instala o NGINX Ingress Controller
+- `make metallb`: instala e configura o MetalLB (IPAddressPool + L2Advertisement)
+- `make destroy`: remove o cluster
+- `make rebuild`: recria tudo do zero
+
+Observação: os alvos `demo` e `hosts` não estão ativos no `Makefile`. Você pode aplicar a demo manualmente com `kubectl apply -f hello-ingress.yaml` e gerenciar o `/etc/hosts` conforme orientações abaixo.
+
+---
+
+## Formas de acessar sua aplicação
+
+### Desenvolvimento local via `/etc/hosts` (com MetalLB)
+1. Suba o cluster: `make rebuild`
+2. Instale a demo (opcional):
+   ```bash
+   kubectl apply -f hello-ingress.yaml
+   ```
+3. Descubra o IP do LoadBalancer do Ingress NGINX:
+   ```bash
+   kubectl -n ingress-nginx get svc ingress-nginx-controller -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+   ```
+4. Adicione o host no `/etc/hosts` (substitua `$IP`):
+   ```bash
+   echo "$IP hello.local" | sudo tee -a /etc/hosts
+   ```
+5. Acesse: `http://hello.local`
+
+> Dica: Você pode alterar o `host` no `hello-ingress.yaml` para outro domínio local, ex.: `app.local`.
+
+### Uso de um serviço de domínio (opcional)
+Você pode utilizar um serviço de domínio externo (por exemplo, um provedor de DNS) para apontar um nome como `www.seu-dominio.com` para este cluster. Essa configuração depende do seu ambiente e provedor e não é detalhada aqui.
+
+---
+
+## Troubleshooting
+
+### Portas 80/443 ocupadas ao criar o cluster
+Sintoma (Kind/Docker):
+
+```
+failed to bind host port for 0.0.0.0:80 ... address already in use
+```
+
+Causa: o `kind-cluster.yaml` mapeia as portas 80 e 443 do host para o node de controle. Se o host já tem `nginx`, `apache` ou outro processo na 80/443, a criação falha.
+
+Opções de correção:
+- Parar o serviço do host e recriar o cluster:
+  ```bash
+  sudo systemctl stop nginx apache2 httpd traefik caddy haproxy 2>/dev/null || true
+  make rebuild
+  ```
+- Alterar as portas do host (ex.: 8080/8443):
+  ```yaml
+  # kind-cluster.yaml
+  nodes:
+  - role: control-plane
+    extraPortMappings:
+      - containerPort: 80
+        hostPort: 8080
+      - containerPort: 443
+        hostPort: 8443
+  ```
+  Acesse via `http://localhost:8080`.
+- Remover os `extraPortMappings` e usar apenas o IP do MetalLB (recomendado para este stack). Veja a seção 
+  "Desenvolvimento local via `/etc/hosts`" para mapear o host para o IP do Ingress.
+
+Como identificar quem está usando a porta:
+```bash
+sudo lsof -nP -iTCP:80 -sTCP:LISTEN
+sudo lsof -nP -iTCP:443 -sTCP:LISTEN
+```
+
+### MetalLB IP Pool
+O script `deploy-metallb.sh` cria um `IPAddressPool` e um `L2Advertisement` com um range padrão. Ajuste o range conforme a sub-rede da rede Docker `kind`:
+```bash
+docker network inspect kind | grep Subnet
+```
+Edite o range no script se necessário.
+
+### Demo e domínios customizados
+Altere o host no `hello-ingress.yaml` para o domínio desejado (ex.: `www.devops.lab.com.br`). É possível integrar um serviço de domínio externo para acesso público, se necessário.
+
+---
+
+## Limpeza
+```bash
+make destroy
+```
+
+---
+
+## Notas
+- O Kind não suporta webhooks admission do ingress-nginx por padrão; o script de instalação desativa os webhooks de admission.
+- Para habilitar métricas e HPA, você pode aplicar `metrics-server.yaml` (ajuste se necessário para o seu ambiente).
+
