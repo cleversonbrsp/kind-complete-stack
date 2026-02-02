@@ -1,8 +1,10 @@
 CLUSTER_NAME=dev-cluster
+K8S_VERSION ?= 1.34.3
+KIND_NODE_IMAGE ?= kindest/node:v$(K8S_VERSION)
 
 up:
 	@echo "[INFO] Criando cluster Kind..."
-	kind create cluster --config kind-cluster.yaml --name $(CLUSTER_NAME)
+	kind create cluster --config kind-cluster.yaml --name $(CLUSTER_NAME) --image $(KIND_NODE_IMAGE)
 
 ingress:
 	bash deploy-nginx-ingress.sh
