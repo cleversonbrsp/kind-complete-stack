@@ -1,4 +1,4 @@
-CLUSTER_NAME=dev-cluster
+CLUSTER_NAME=k8s-local-cluster
 K8S_VERSION ?= 1.34.3
 KIND_NODE_IMAGE ?= kindest/node:v$(K8S_VERSION)
 
