@@ -91,40 +91,20 @@ You can use an external domain service (for example, a DNS provider) to point a 
 ## Troubleshooting
 
 ### Ports 80/443 in use when creating the cluster
-Symptom (Kind/Docker):
+This stack uses **host ports 8080 and 8443** by default (mapped from container 80/443) to avoid conflicts with nginx, apache, or other services on the host. Access the Ingress via `http://localhost:8080` or `https://localhost:8443`.
 
+If you see:
 ```
 failed to bind host port for 0.0.0.0:80 ... address already in use
 ```
+then the config was using host port 80. Either keep the default 8080/8443, or free the port and set `hostPort: 80` / `hostPort: 443` in `kind-cluster.yaml`.
 
-Cause: `kind-cluster.yaml` maps host ports 80 and 443 to the control-plane node. If the host already has `nginx`, `apache`, or another process on 80/443, creation fails.
-
-Fix options:
-- Stop the host service and recreate the cluster:
-  ```bash
-  sudo systemctl stop nginx apache2 httpd traefik caddy haproxy 2>/dev/null || true
-  make rebuild
-  ```
-- Change the host ports (e.g., 8080/8443):
-  ```yaml
-  # kind-cluster.yaml
-  nodes:
-  - role: control-plane
-    extraPortMappings:
-      - containerPort: 80
-        hostPort: 8080
-      - containerPort: 443
-        hostPort: 8443
-  ```
-  Access via `http://localhost:8080`.
-- Remove `extraPortMappings` and use only the MetalLB IP (recommended for this stack). See the section
-  "Local development via `/etc/hosts`" to map the host to the Ingress IP.
-
-How to identify which process is using the port:
+To use standard 80/443, set `hostPort: 80` and `hostPort: 443` in `kind-cluster.yaml` and ensure nothing is listening:
 ```bash
 sudo lsof -nP -iTCP:80 -sTCP:LISTEN
 sudo lsof -nP -iTCP:443 -sTCP:LISTEN
 ```
+Alternatively, remove `extraPortMappings` and use only the MetalLB IP; see "Local development via `/etc/hosts`".
 
 ### MetalLB IP Pool
 The `deploy-metallb.sh` script creates an `IPAddressPool` and an `L2Advertisement` with a default range. Adjust the range according to the Docker `kind` network subnet:
